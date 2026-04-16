@@ -1,4 +1,5 @@
 locality,Commuting to work,Education,Medical Purpose,Others,Personal Errands,Recreation,Shopping,Visiting Someone
+,0,0,0,140,1,115,1,0
 Birkirkara,152,24,18,224,25,183,230,0
 Birżebbuġa,18,3,4,258,14,135,49,0
 Bormla,2,17,3,126,9,171,24,0
@@ -52,7 +53,6 @@ Ta' Sannat,2,2,1,16,4,70,5,0
 Ta' Xbiex,21,0,3,12,5,37,12,0
 Tal-Pietà,9,8,11,45,4,33,24,0
 Tas-Sliema,14,10,8,126,34,333,154,0
-Unknown locality,0,0,0,140,1,115,1,0
 Wied il-Għajn,2,4,2,148,12,165,19,0
 Ħ'Attard,38,9,13,201,29,215,69,0
 Ħad-Dingli,1,5,0,56,6,73,5,0

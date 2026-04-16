@@ -346,10 +346,6 @@ Tas-Sliema,Others,126
 Tas-Sliema,Personal Errands,34
 Tas-Sliema,Recreation,333
 Tas-Sliema,Shopping,154
-Unknown locality,Others,140
-Unknown locality,Personal Errands,1
-Unknown locality,Recreation,115
-Unknown locality,Shopping,1
 Wied il-Għajn,Commuting to work,2
 Wied il-Għajn,Education,4
 Wied il-Għajn,Medical Purpose,2
@@ -443,3 +439,7 @@ Wied il-Għajn,Shopping,19
 Ħaż-Żebbuġ,Personal Errands,21
 Ħaż-Żebbuġ,Recreation,171
 Ħaż-Żebbuġ,Shopping,36
+,Others,140
+,Personal Errands,1
+,Recreation,115
+,Shopping,1

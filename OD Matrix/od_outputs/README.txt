@@ -14,9 +14,7 @@ Deduplication rule:
   * point preferred for Shopping, Personal Errands, Recreation, Commuting to work
 - Unnamed features are kept as-is.
 
-Main files to use next:
-- locality_attractiveness_matrix.csv (locality x trip_category)
-- category_vs_locality_matrix.csv (trip_category x locality)
-- category_vs_locality_matrix.html (visual heatmap)
+Main file to use next:
+- locality_attractiveness_matrix.csv
 
 This matrix can now be used as destination attractiveness A_jk in the OD model.

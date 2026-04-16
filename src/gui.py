@@ -1,6 +1,17 @@
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+@st.cache_data
+def load_data():
+    df_base = pd.read_csv(BASE_DIR / "synthetic_trips.csv")
+    df_4dw = pd.read_csv(BASE_DIR / "4dw_full_population.csv")
+    df_base["scenario"] = "5-Day (Baseline)"
+    df_4dw["scenario"] = "4-Day Week"
+    return df_base, df_4dw, pd.concat([df_base, df_4dw], ignore_index=True)
 
 # 1. Page Configuration
 st.set_page_config(page_title="Malta 4DW Impact Analysis", layout="wide")
