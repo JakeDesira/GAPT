@@ -1,12 +1,23 @@
 import numpy as np 
 import pandas as pd
 from numpy.random import default_rng
-RNG = default_rng(42) # seeded random generator for reproducibility
+from paths import (
+    BASELINE_TRIPS_PATH,
+    LOCALITIES_COUNTS_PATH,
+    LOCALITIES_POPULATION_PATH,
+    LOCALITIES_REGION_PATH,
+    ensure_project_directories,
+)
+
+
+DEFAULT_TRIP_COUNT = 100000
+DEFAULT_SEED = 42
+RNG = default_rng(DEFAULT_SEED) # seeded random generator for reproducibility
 
 # ── Locality-level data ──────────────────────────────────────────────────────
 
 # Load population data (used for weighted origin selection)
-_pop_raw = pd.read_csv("localities_population.csv")
+_pop_raw = pd.read_csv(LOCALITIES_POPULATION_PATH)
 # The CSV is wide: one row called "Population", localities are the columns
 Locality_names = [c for c in _pop_raw.columns if c != "Locality"]
 # Values are stored as strings like "29,482" — strip commas before converting
@@ -21,7 +32,7 @@ _pop_values = (
 )
 
 # Load POI counts per locality, by trip purpose (used for weighted destination)
-_poi_raw = pd.read_csv("localities_counts.csv").set_index("Category")
+_poi_raw = pd.read_csv(LOCALITIES_COUNTS_PATH).set_index("Category")
 
 # Map each syndata Purpose label → the matching POI category row name
 # Purposes that have no dedicated POI row fall back to "Others"
@@ -47,7 +58,7 @@ PURPOSE_TO_POI = {
 #   Origin_weights_by_region[district]               → population-weighted probs
 #   Destination_weights_by_region[district][purpose] → POI-weighted probs
 
-_region_raw = pd.read_csv("localities_region.csv")
+_region_raw = pd.read_csv(LOCALITIES_REGION_PATH)
 
 Region_locality_names = {}
 for district in _region_raw.columns:
@@ -752,79 +763,89 @@ Mode_given_purpose_PROB = {
 
 
 
-def sample_predicted_origin(origin_district):
+def sample_predicted_origin(origin_district, rng=None):
     """Pick a locality as the predicted trip origin.
     Only localities within origin_district are eligible, weighted by population."""
+    active_rng = rng or RNG
     locs = Region_locality_names[origin_district]
     weights = Origin_weights_by_region[origin_district]
-    return RNG.choice(locs, p=weights)
+    return active_rng.choice(locs, p=weights)
 
-def sample_predicted_destination(destination_district, purpose):
+def sample_predicted_destination(destination_district, purpose, rng=None):
     """Pick a locality as the predicted trip destination.
     Only localities within destination_district are eligible, weighted by POI counts for that purpose."""
+    active_rng = rng or RNG
     locs = Region_locality_names[destination_district]
     weights = Destination_weights_by_region[destination_district][purpose]
-    return RNG.choice(locs, p=weights)
+    return active_rng.choice(locs, p=weights)
 
-def sample_purpose(labour):
-    return RNG.choice(Purpose, p=Purpose_given_labour_PROB[labour])
+def sample_purpose(labour, rng=None):
+    active_rng = rng or RNG
+    return active_rng.choice(Purpose, p=Purpose_given_labour_PROB[labour])
 
-def sample_mode(purpose):
-    return RNG.choice(Mode_transport_4, p=Mode_given_purpose_PROB[purpose])
+def sample_mode(purpose, rng=None):
+    active_rng = rng or RNG
+    return active_rng.choice(Mode_transport_4, p=Mode_given_purpose_PROB[purpose])
 
 sample_time = RNG.choice(Time_bins, p=Total_trips_time_bin_PROB)
 
-def sample_destination(origin_idx):
-    return RNG.choice(District_names, p=OD_PROB[origin_idx])
+def sample_destination(origin_idx, rng=None):
+    active_rng = rng or RNG
+    return active_rng.choice(District_names, p=OD_PROB[origin_idx])
 
-def sample_labour_status():
-    return RNG.choice(Labour_status, p=PV_users_labour_PROB)
+def sample_labour_status(rng=None):
+    active_rng = rng or RNG
+    return active_rng.choice(Labour_status, p=PV_users_labour_PROB)
 
-def sample_origin():
+def sample_origin(rng=None):
+    active_rng = rng or RNG
     origin_totals = Trips_distO_and_distD.sum(axis=1)
     origin_prob = origin_totals / origin_totals.sum()
-    return RNG.choice(len(District_names), p=origin_prob)
+    return active_rng.choice(len(District_names), p=origin_prob)
 
-def sample_parking(mode):
+def sample_parking(mode, rng=None):
+    active_rng = rng or RNG
     if mode != 'Personal Vehicle':
         return None, None
-    parking_type = RNG.choice(Parking_type_labels, p=No_PV_parking_PROB)
-    parking_cost = RNG.choice(Parking_cost_labels, p=Cost_parking_PROB)
+    parking_type = active_rng.choice(Parking_type_labels, p=No_PV_parking_PROB)
+    parking_cost = active_rng.choice(Parking_cost_labels, p=Cost_parking_PROB)
     return parking_type, parking_cost
 
-def sample_bus_ticket(mode):
+def sample_bus_ticket(mode, rng=None):
+    active_rng = rng or RNG
     if mode != 'Bus':
         return None
-    return RNG.choice(Bus_ticket_labels, p=Bus_users_ticket_type_PROB)
+    return active_rng.choice(Bus_ticket_labels, p=Bus_users_ticket_type_PROB)
 
-def generate_trip():
+def generate_trip(rng=None):
+    active_rng = rng or RNG
     # 1. Labour status
-    labour = sample_labour_status()
+    labour = sample_labour_status(active_rng)
 
     # 2. Purpose (conditional on labour)
-    purpose = sample_purpose(labour)
+    purpose = sample_purpose(labour, active_rng)
 
     # 3. Mode (conditional on purpose)
-    mode = sample_mode(purpose)
+    mode = sample_mode(purpose, active_rng)
 
     # 4. Time of day (global distribution)
-    time_bin = RNG.choice(Time_bins, p=Total_trips_time_bin_PROB)
+    time_bin = active_rng.choice(Time_bins, p=Total_trips_time_bin_PROB)
 
     # 5. Origin & destination (district-level, from NSO trip tables)
-    origin_idx = sample_origin()
-    destination = sample_destination(origin_idx)
+    origin_idx = sample_origin(active_rng)
+    destination = sample_destination(origin_idx, active_rng)
     origin = District_names[origin_idx]
 
     # 6. Predicted origin & destination (locality-level, from population / POI data)
     # Constrained to only localities within the already-generated district
-    predicted_origin = sample_predicted_origin(origin)
-    predicted_destination = sample_predicted_destination(destination, purpose)
+    predicted_origin = sample_predicted_origin(origin, active_rng)
+    predicted_destination = sample_predicted_destination(destination, purpose, active_rng)
 
     # 7. Parking (if PV)
-    parking_type, parking_cost = sample_parking(mode)
+    parking_type, parking_cost = sample_parking(mode, active_rng)
 
     # 8. Bus ticket (if Bus)
-    bus_ticket = sample_bus_ticket(mode)
+    bus_ticket = sample_bus_ticket(mode, active_rng)
 
     return {
         "labour_status": labour,
@@ -841,7 +862,33 @@ def generate_trip():
     }
 
 def generate_trips(n):
-    return pd.DataFrame([generate_trip() for _ in range(n)])
+    global RNG
+    RNG = default_rng(DEFAULT_SEED)
+    return pd.DataFrame([generate_trip(RNG) for _ in range(n)])
 
-df = generate_trips(100000)
-df.to_csv("synthetic_trips.csv", index=False, encoding='utf-8-sig')
+def generate_trips_with_seed(n, seed=DEFAULT_SEED):
+    global RNG
+    RNG = default_rng(seed)
+    return pd.DataFrame([generate_trip(RNG) for _ in range(n)])
+
+def save_generated_trips(df, output_path=BASELINE_TRIPS_PATH):
+    ensure_project_directories()
+    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    return output_path
+
+def generate_and_save_trips(
+    n=DEFAULT_TRIP_COUNT,
+    seed=DEFAULT_SEED,
+    output_path=BASELINE_TRIPS_PATH,
+):
+    df = generate_trips_with_seed(n, seed=seed)
+    saved_path = save_generated_trips(df, output_path=output_path)
+    return df, saved_path
+
+def main():
+    df, saved_path = generate_and_save_trips()
+    print(f"Saved -> {saved_path}")
+    print(f"Trips generated: {len(df)}")
+
+if __name__ == "__main__":
+    main()

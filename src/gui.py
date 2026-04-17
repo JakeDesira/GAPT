@@ -1,128 +1,524 @@
-from pathlib import Path
-import streamlit as st
+import importlib
+import re
+import sqlite3
+import struct
+import unicodedata
+
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+from paths import (
+    BASELINE_TRIPS_PATH,
+    FOUR_DAY_TRIPS_PATH,
+    GENERATED_TRIP_DATA_DIR,
+    LOCALITY_BOUNDARIES_GPKG_PATH,
+)
+from syndata import (
+    DEFAULT_SEED,
+    generate_trips_with_seed,
+    save_generated_trips,
+)
 
-@st.cache_data
-def load_data():
-    df_base = pd.read_csv(BASE_DIR / "synthetic_trips.csv")
-    df_4dw = pd.read_csv(BASE_DIR / "4dw_full_population.csv")
-    df_base["scenario"] = "5-Day (Baseline)"
-    df_4dw["scenario"] = "4-Day Week"
-    return df_base, df_4dw, pd.concat([df_base, df_4dw], ignore_index=True)
+four_day_module = importlib.import_module("4_day")
+DEFAULT_EMPLOYED_TRIP_RETENTION = four_day_module.DEFAULT_EMPLOYED_TRIP_RETENTION
+generate_4day_week_dataset = four_day_module.generate_4day_week_dataset
+save_4day_week_dataset = four_day_module.save_4day_week_dataset
 
-# 1. Page Configuration
+
 st.set_page_config(page_title="Malta 4DW Impact Analysis", layout="wide")
 
-# 2. Coordinate Database (Comprehensive Malta & Gozo)
-COORDS = {
-    'Birkirkara': [35.8972, 14.4611], 'Il-Gżira': [35.9058, 14.4961], 'Il-Ħamrun': [35.8847, 14.4844],
-    'L-Imsida': [35.8967, 14.4892], 'Pembroke': [35.9306, 14.4764], 'Tal-Pietà': [35.8944, 14.4944],
-    'Ħal Qormi': [35.8794, 14.4722], 'San Ġiljan': [35.9183, 14.4883], 'San Ġwann': [35.9094, 14.4786],
-    'Santa Venera': [35.8903, 14.4736], 'Tas-Sliema': [35.9122, 14.5042], 'Is-Swieqi': [35.9225, 14.4800],
-    'Il-Mellieħa': [35.9333, 14.3667], 'Il-Mosta': [35.9097, 14.4261], 'In-Naxxar': [35.9150, 14.4447],
-    'San Pawl il-Baħar': [35.9483, 14.4017], 'Il-Belt Valletta': [35.8989, 14.5145], 'Ħaż-Żabbar': [35.8772, 14.5381],
-    'Victoria': [36.0444, 14.2397], 'Ix-Xagħra': [36.0500, 14.2644], 'In-Nadur': [36.0375, 14.2883],
-    'Iż-Żebbuġ': [36.0720, 14.2410], 'Ix-Xewkija': [36.0328, 14.2581]
-}
+TIME_ORDER = [
+    "00:00 - 02:59",
+    "03:00 - 05:59",
+    "06:00 - 08:59",
+    "09:00 - 11:59",
+    "12:00 - 14:59",
+    "15:00 - 17:59",
+    "18:00 - 20:59",
+    "21:00 - 23:59",
+]
 
-# 3. Data Loading
-@st.cache_data
-def load_data():
-    df_base = pd.read_csv("synthetic_trips.csv")
-    df_4dw = pd.read_csv("4dw_full_population.csv")
-    df_base['scenario'] = '5-Day (Baseline)'
-    df_4dw['scenario'] = '4-Day Week'
-    return df_base, df_4dw, pd.concat([df_base, df_4dw], ignore_index=True)
+HEATMAP_SCALE = [
+    (0.00, "#f8f3e8"),
+    (0.20, "#f1d7a2"),
+    (0.45, "#e49b42"),
+    (0.70, "#c95d2d"),
+    (1.00, "#6e1d1b"),
+]
+MAP_CENTER = {"lat": 35.95, "lon": 14.40}
+MAP_ZOOM = 8.85
 
-df_base, df_4dw, df_all = load_data()
 
-# --- CALCULATE KPI METRICS ---
-total_base = len(df_base)
-total_4dw = len(df_4dw)
-decrease_raw = total_base - total_4dw
-pct_decrease = (decrease_raw / total_base) * 100
+@st.cache_data(show_spinner="Generating trips and refreshing plots...")
+def build_scenarios(
+    trip_count: int,
+    seed: int,
+    employed_trip_retention: float,
+):
+    baseline_df = generate_trips_with_seed(trip_count, seed=seed)
+    baseline_df["scenario"] = "5-Day (Baseline)"
 
-# --- TOP HEADER (METRICS) ---
-st.title("🚗 Malta 4-Day Work Week Impact Study")
-m1, m2, m3 = st.columns(3)
-m1.metric("Trips (5-Day Baseline)", f"{total_base:,}")
-m2.metric("Trips (4-Day Week)", f"{total_4dw:,}", delta=f"-{decrease_raw:,} trips")
-m3.metric("Reduction in Traffic Volume", f"{pct_decrease:.1f}%", delta_color="normal")
-
-st.divider()
-
-# 4. SIDEBAR NAVIGATION
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ["Geographic Heatmap", "Data Insights & Graphs"])
-
-st.sidebar.divider()
-st.sidebar.subheader("Scenario Selection")
-scen_choice = st.sidebar.selectbox("Select View for Visuals:", ["5-Day (Baseline)", "4-Day Week"])
-active_df = df_base if scen_choice == "5-Day (Baseline)" else df_4dw
-
-# -------------------------------------------------------------------------
-# PAGE 1: GEOGRAPHIC HEATMAP
-# -------------------------------------------------------------------------
-if page == "Geographic Heatmap":
-    st.subheader(f"📍 Trip Density Heatmap ({scen_choice})")
-    
-    h_df = active_df['predicted_origin'].value_counts().reset_index()
-    h_df.columns = ['locality', 'trips']
-    h_df = h_df[h_df['locality'].isin(COORDS.keys())]
-    h_df['lat'] = h_df['locality'].apply(lambda x: COORDS[x][0])
-    h_df['lon'] = h_df['locality'].apply(lambda x: COORDS[x][1])
-
-    fig_map = px.density_mapbox(
-        h_df, lat='lat', lon='lon', z='trips', 
-        radius=30, zoom=10, height=700,
-        center={"lat": 35.95, "lon": 14.40},
-        mapbox_style="carto-positron",
-        color_continuous_scale="Plasma",
-        title="Heat Intensity: Darker = More Congestion"
+    four_day_df = generate_4day_week_dataset(
+        baseline_df,
+        employed_trip_retention=employed_trip_retention,
+        seed=seed,
     )
-    st.plotly_chart(fig_map, use_container_width=True)
+    four_day_df["scenario"] = "4-Day Week"
 
-# -------------------------------------------------------------------------
-# PAGE 2: DATA INSIGHTS & GRAPHS
-# -------------------------------------------------------------------------
-elif page == "Data Insights & Graphs":
-    st.subheader("📊 Statistical Comparison")
-    
-    # 1. TOP 10 BUSIEST AREAS GRAPH
-    st.markdown("### 🏙️ Top 10 Busiest Localities")
-    top_towns = active_df['predicted_origin'].value_counts().nlargest(10).reset_index()
-    top_towns.columns = ['Town', 'Total Trips']
-    
-    fig_busiest = px.bar(top_towns, x='Total Trips', y='Town', orientation='h',
-                         color='Total Trips', color_continuous_scale='Viridis',
-                         text_auto='.2s')
-    fig_busiest.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_busiest, use_container_width=True)
+    combined_df = pd.concat([baseline_df, four_day_df], ignore_index=True)
+    return baseline_df, four_day_df, combined_df
 
-    st.divider()
 
-    # 2. THE TRAFFIC CLOCK (Line Graph)
-    st.markdown("### ⏰ The Traffic Clock (Congestion over Time)")
-    time_order = ['00:00 - 02:59', '03:00 - 05:59', '06:00 - 08:59', '09:00 - 11:59', 
-                  '12:00 - 14:59', '15:00 - 17:59', '18:00 - 20:59', '21:00 - 23:59']
-    time_stats = df_all.groupby(['time_bin', 'scenario']).size().reset_index(name='Count')
-    time_stats['time_bin'] = pd.Categorical(time_stats['time_bin'], categories=time_order, ordered=True)
-    
-    fig_line = px.line(time_stats.sort_values('time_bin'), x='time_bin', y='Count', color='scenario', 
-                       markers=True, title="Hourly Volume Comparison")
-    st.plotly_chart(fig_line, use_container_width=True)
+def normalize_locality_name(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("’", "'").replace("`", "'").replace("'", " ")
+    normalized = re.sub(r"[^a-zA-Z0-9]+", " ", normalized.lower())
+    return re.sub(r"\s+", " ", normalized).strip()
 
-    st.divider()
 
-    # 3. MODE & PURPOSE
+def parse_gpkg_header(blob: bytes):
+    flags = blob[3]
+    endian = "<" if (flags & 1) else ">"
+    envelope_code = (flags >> 1) & 0b111
+    envelope_bytes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get(envelope_code, 0)
+
+    bbox = None
+    if envelope_bytes >= 32:
+        minx, maxx, miny, maxy = struct.unpack_from(f"{endian}dddd", blob, 8)
+        bbox = {
+            "minx": minx,
+            "maxx": maxx,
+            "miny": miny,
+            "maxy": maxy,
+        }
+
+    return endian, 8 + envelope_bytes, bbox
+
+
+def parse_ring(data: bytes, offset: int, endian: str):
+    point_count = struct.unpack_from(f"{endian}I", data, offset)[0]
+    offset += 4
+    points = []
+    for _ in range(point_count):
+        lon, lat = struct.unpack_from(f"{endian}dd", data, offset)
+        points.append([lon, lat])
+        offset += 16
+    return points, offset
+
+
+def parse_polygon(data: bytes, offset: int):
+    byte_order = data[offset]
+    endian = "<" if byte_order == 1 else ">"
+    offset += 1
+    geometry_type = struct.unpack_from(f"{endian}I", data, offset)[0] % 1000
+    offset += 4
+    if geometry_type != 3:
+        raise ValueError(f"Expected Polygon WKB, got geometry type {geometry_type}")
+
+    ring_count = struct.unpack_from(f"{endian}I", data, offset)[0]
+    offset += 4
+
+    rings = []
+    for _ in range(ring_count):
+        ring, offset = parse_ring(data, offset, endian)
+        rings.append(ring)
+
+    return rings, offset
+
+
+def parse_wkb_geometry(data: bytes, offset: int):
+    byte_order = data[offset]
+    endian = "<" if byte_order == 1 else ">"
+    geometry_type = struct.unpack_from(f"{endian}I", data, offset + 1)[0] % 1000
+
+    if geometry_type == 6:
+        offset += 1
+        offset += 4
+        polygon_count = struct.unpack_from(f"{endian}I", data, offset)[0]
+        offset += 4
+
+        polygons = []
+        for _ in range(polygon_count):
+            polygon, offset = parse_polygon(data, offset)
+            polygons.append(polygon)
+        return {"type": "MultiPolygon", "coordinates": polygons}
+
+    if geometry_type == 3:
+        polygon, _ = parse_polygon(data, offset)
+        return {"type": "MultiPolygon", "coordinates": [polygon]}
+
+    raise ValueError(f"Unsupported WKB geometry type {geometry_type}")
+
+
+def alias_boundary_name(name: str, center_lat: float) -> str:
+    if name == "Ir-Rabat" and center_lat >= 36.0:
+        return "Ir-Rabat, Ghawdex"
+    return name
+
+
+@st.cache_data(show_spinner=False)
+def load_locality_boundaries():
+    connection = sqlite3.connect(LOCALITY_BOUNDARIES_GPKG_PATH)
+    rows = connection.execute(
+        "SELECT fid, name, geom FROM matching_features WHERE name IS NOT NULL"
+    ).fetchall()
+    connection.close()
+
+    features = []
+    records = []
+    for fid, name, geom in rows:
+        _, wkb_offset, bbox = parse_gpkg_header(geom)
+        geometry = parse_wkb_geometry(geom, wkb_offset)
+
+        center_lon = (bbox["minx"] + bbox["maxx"]) / 2
+        center_lat = (bbox["miny"] + bbox["maxy"]) / 2
+        display_name = alias_boundary_name(name, center_lat)
+        locality_key = normalize_locality_name(display_name)
+
+        features.append(
+            {
+                "type": "Feature",
+                "id": locality_key,
+                "properties": {
+                    "fid": fid,
+                    "locality": display_name,
+                    "locality_key": locality_key,
+                },
+                "geometry": geometry,
+            }
+        )
+        records.append(
+            {
+                "locality": display_name,
+                "locality_key": locality_key,
+                "center_lon": center_lon,
+                "center_lat": center_lat,
+            }
+        )
+
+    metadata_df = pd.DataFrame(records).drop_duplicates(subset=["locality_key"], keep="first")
+    return {"type": "FeatureCollection", "features": features}, metadata_df
+
+
+def build_heatmap_dataframe(df: pd.DataFrame):
+    geojson, metadata_df = load_locality_boundaries()
+    trip_counts = (
+        df["predicted_origin"]
+        .dropna()
+        .map(normalize_locality_name)
+        .value_counts()
+        .rename_axis("locality_key")
+        .reset_index(name="trips")
+    )
+
+    map_df = metadata_df.merge(trip_counts, on="locality_key", how="left")
+    map_df["trips"] = map_df["trips"].fillna(0).astype(int)
+    total_trips = max(int(map_df["trips"].sum()), 1)
+    map_df["share_pct"] = (map_df["trips"] / total_trips) * 100
+    return geojson, map_df
+
+
+def build_time_stats(df: pd.DataFrame) -> pd.DataFrame:
+    stats = df.groupby(["time_bin", "scenario"]).size().reset_index(name="Count")
+    stats["time_bin"] = pd.Categorical(stats["time_bin"], categories=TIME_ORDER, ordered=True)
+    return stats.sort_values("time_bin")
+
+
+def build_grouped_counts(df: pd.DataFrame, column: str, label: str) -> pd.DataFrame:
+    stats = df.groupby([column, "scenario"]).size().reset_index(name="Count")
+    order = (
+        df.groupby(column)
+        .size()
+        .sort_values(ascending=False)
+        .index
+        .tolist()
+    )
+    stats[label] = pd.Categorical(stats[column], categories=order, ordered=True)
+    return stats.drop(columns=[column]).sort_values(label)
+
+
+def build_top_locality_comparison(df: pd.DataFrame, column: str, label: str, top_n: int = 10) -> pd.DataFrame:
+    top_localities = df[column].value_counts().nlargest(top_n).index.tolist()
+    stats = (
+        df[df[column].isin(top_localities)]
+        .groupby([column, "scenario"])
+        .size()
+        .reset_index(name="Count")
+    )
+    order = (
+        df[df[column].isin(top_localities)]
+        .groupby(column)
+        .size()
+        .sort_values(ascending=True)
+        .index
+        .tolist()
+    )
+    stats[label] = pd.Categorical(stats[column], categories=order, ordered=True)
+    return stats.drop(columns=[column]).sort_values(label)
+
+
+def render_heatmap(df: pd.DataFrame, title: str):
+    geojson, map_df = build_heatmap_dataframe(df)
+    if map_df.empty:
+        st.warning("No mapped localities are available for the current dataset.")
+        return
+
+    max_trips = max(int(map_df["trips"].max()), 1)
+    choropleth = px.choropleth_mapbox(
+        map_df,
+        geojson=geojson,
+        locations="locality_key",
+        featureidkey="properties.locality_key",
+        color="trips",
+        hover_name="locality",
+        custom_data=["share_pct"],
+        color_continuous_scale=HEATMAP_SCALE,
+        range_color=(0, max_trips),
+        opacity=0.78,
+        zoom=MAP_ZOOM,
+        height=680,
+        center=MAP_CENTER,
+        mapbox_style="open-street-map",
+        title=title,
+    )
+    choropleth.update_traces(
+        marker_line_width=1.2,
+        marker_line_color="rgba(255, 255, 255, 0.88)",
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "Trips: %{z:,}<br>"
+            "Share of predicted origins: %{customdata[0]:.2f}%<extra></extra>"
+        ),
+    )
+
+    figure = choropleth
+    figure.update_layout(
+        margin={"l": 0, "r": 0, "t": 60, "b": 0},
+        coloraxis_colorbar={"title": "Trips"},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 0.01,
+            "xanchor": "left",
+            "x": 0.01,
+            "bgcolor": "rgba(255,255,255,0.55)",
+        },
+    )
+    st.plotly_chart(figure, use_container_width=True)
+    st.caption(
+        "Locality polygons are shaded by predicted trip origins. White borders show the locality "
+        "boundaries from `malta_localities.gpkg`."
+    )
+
+
+def render_single_scenario_localities(df: pd.DataFrame):
+    top_origins = df["predicted_origin"].value_counts().nlargest(10).reset_index()
+    top_origins.columns = ["Locality", "Trips"]
+
+    top_destinations = df["predicted_destination"].value_counts().nlargest(10).reset_index()
+    top_destinations.columns = ["Locality", "Trips"]
+
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("### 🚌 Transport Mode Split")
-        st.plotly_chart(px.pie(active_df, names='mode', hole=0.5), use_container_width=True)
+        st.markdown("### Top Origin Localities")
+        figure = px.bar(
+            top_origins,
+            x="Trips",
+            y="Locality",
+            orientation="h",
+            color="Trips",
+            color_continuous_scale="Viridis",
+            text_auto=".2s",
+        )
+        figure.update_layout(yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(figure, use_container_width=True)
     with col2:
-        st.markdown("### 🎯 Trip Purpose Analysis")
-        purpose_stats = df_all.groupby(['purpose', 'scenario']).size().reset_index(name='Count')
-        st.plotly_chart(px.bar(purpose_stats, x='purpose', y='Count', color='scenario', barmode='group'), use_container_width=True)
+        st.markdown("### Top Destination Localities")
+        figure = px.bar(
+            top_destinations,
+            x="Trips",
+            y="Locality",
+            orientation="h",
+            color="Trips",
+            color_continuous_scale="Magma",
+            text_auto=".2s",
+        )
+        figure.update_layout(yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(figure, use_container_width=True)
+
+
+def render_single_scenario_breakdowns(df: pd.DataFrame):
+    mode_counts = df["mode"].value_counts().reset_index()
+    mode_counts.columns = ["Mode", "Trips"]
+
+    purpose_counts = df["purpose"].value_counts().reset_index()
+    purpose_counts.columns = ["Purpose", "Trips"]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Mode Split")
+        st.plotly_chart(px.pie(mode_counts, names="Mode", values="Trips", hole=0.5), use_container_width=True)
+    with col2:
+        st.markdown("### Purpose Split")
+        figure = px.bar(
+            purpose_counts,
+            x="Purpose",
+            y="Trips",
+            color="Trips",
+            color_continuous_scale="Blues",
+        )
+        st.plotly_chart(figure, use_container_width=True)
+
+
+def render_comparison_tab(combined_df: pd.DataFrame):
+    st.subheader("Scenario Comparison")
+    st.write(
+        "Every chart in this tab compares the 5-day baseline against the 4-day week scenario "
+        "using the same simulation settings."
+    )
+
+    st.markdown("### Traffic Clock")
+    st.plotly_chart(
+        px.line(
+            build_time_stats(combined_df),
+            x="time_bin",
+            y="Count",
+            color="scenario",
+            markers=True,
+            title="Hourly Volume Comparison",
+        ),
+        use_container_width=True,
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Mode Comparison")
+        mode_stats = build_grouped_counts(combined_df, "mode", "Mode")
+        st.plotly_chart(
+            px.bar(mode_stats, x="Mode", y="Count", color="scenario", barmode="group"),
+            use_container_width=True,
+        )
+    with col2:
+        st.markdown("### Purpose Comparison")
+        purpose_stats = build_grouped_counts(combined_df, "purpose", "Purpose")
+        st.plotly_chart(
+            px.bar(purpose_stats, x="Purpose", y="Count", color="scenario", barmode="group"),
+            use_container_width=True,
+        )
+
+    st.markdown("### Busiest Origin Localities")
+    locality_stats = build_top_locality_comparison(combined_df, "predicted_origin", "Locality")
+    figure = px.bar(
+        locality_stats,
+        x="Count",
+        y="Locality",
+        color="scenario",
+        barmode="group",
+        orientation="h",
+    )
+    figure.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(figure, use_container_width=True)
+
+
+def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str):
+    st.subheader(scenario_title)
+    render_heatmap(df, f"Trip Density by Predicted Origin ({scenario_title})")
+    render_single_scenario_localities(df)
+    render_single_scenario_breakdowns(df)
+    with st.expander("Show sample rows"):
+        st.dataframe(df.head(50), use_container_width=True)
+
+
+st.title("Malta 4-Day Work Week Impact Study")
+st.markdown(
+    "This dashboard always generates **both** scenarios together. "
+    "Use the comparison tab to compare them, and the individual scenario tabs "
+    "to inspect each dataset on its own."
+)
+
+with st.sidebar:
+    st.header("Simulation Controls")
+    trip_count = st.slider(
+        "Trips generated",
+        min_value=10000,
+        max_value=200000,
+        value=50000,
+        step=5000,
+        help="Total synthetic trips generated for the 5-day baseline before the 4-day scenario is derived from it.",
+    )
+    employed_trip_retention = st.slider(
+        "4-day employed trip retention",
+        min_value=0.10,
+        max_value=1.00,
+        value=float(DEFAULT_EMPLOYED_TRIP_RETENTION),
+        step=0.05,
+        help="Share of employed trips kept in the 4-day scenario. Lower values mean a stronger reduction.",
+    )
+    seed = st.number_input(
+        "Random seed",
+        min_value=0,
+        max_value=999999,
+        value=DEFAULT_SEED,
+        step=1,
+        help="Use the same seed to reproduce the same synthetic datasets.",
+    )
+    with st.expander("What these controls do"):
+        st.markdown(
+            "- `Trips generated`: sets the baseline simulation size.\n"
+            "- `4-day employed trip retention`: controls how many employed trips remain in the 4-day scenario.\n"
+            "- `Random seed`: keeps the generated datasets repeatable."
+        )
+    save_requested = st.button("Save current CSV outputs", use_container_width=True)
+    st.caption(
+        "Optional export. This saves the currently displayed baseline and 4-day CSV files to "
+        f"`{GENERATED_TRIP_DATA_DIR}` for reuse outside the app."
+    )
+
+baseline_df, four_day_df, combined_df = build_scenarios(
+    trip_count=trip_count,
+    seed=int(seed),
+    employed_trip_retention=employed_trip_retention,
+)
+
+if save_requested:
+    baseline_path = save_generated_trips(baseline_df, BASELINE_TRIPS_PATH)
+    four_day_path = save_4day_week_dataset(four_day_df, FOUR_DAY_TRIPS_PATH)
+    st.success(
+        "Saved current CSV outputs:\n\n"
+        f"- `{baseline_path.name}`\n"
+        f"- `{four_day_path.name}`"
+    )
+
+baseline_total = len(baseline_df)
+four_day_total = len(four_day_df)
+trips_removed = baseline_total - four_day_total
+reduction_pct = (trips_removed / baseline_total) * 100 if baseline_total else 0.0
+retained_employed = int((four_day_df["labour_status"] == "Employed").sum())
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Baseline Trips", f"{baseline_total:,}")
+m2.metric("4-Day Trips", f"{four_day_total:,}", delta=f"-{trips_removed:,} vs baseline", delta_color="inverse")
+m3.metric("Trips Removed", f"{trips_removed:,}")
+m4.metric("Employed Trips Retained", f"{retained_employed:,}")
+
+st.caption("Plots update after each control change. Larger trip counts take longer to regenerate.")
+st.info(
+    f"Current simulation: {trip_count:,} baseline trips, seed {int(seed)}, "
+    f"and 4-day employed trip retention set to {employed_trip_retention:.2f}. "
+    f"Overall trip reduction: {reduction_pct:.1f}%."
+)
+
+comparison_tab, baseline_tab, four_day_tab = st.tabs(
+    ["Scenario Comparison", "5-Day Baseline", "4-Day Week"]
+)
+
+with comparison_tab:
+    render_comparison_tab(combined_df)
+
+with baseline_tab:
+    render_single_scenario_tab(baseline_df, "5-Day Baseline")
+
+with four_day_tab:
+    render_single_scenario_tab(four_day_df, "4-Day Week")
