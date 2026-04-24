@@ -9,22 +9,16 @@ import plotly.express as px
 import streamlit as st
 
 from paths import (
-    BASELINE_TRIPS_PATH,
-    FOUR_DAY_TRIPS_PATH,
-    GENERATED_TRIP_DATA_DIR,
     LOCALITY_BOUNDARIES_GPKG_PATH,
 )
 from syndata import (
     DEFAULT_SEED,
     generate_trips_with_seed,
-    save_generated_trips,
 )
 
 four_day_module = importlib.import_module("4_day")
 DEFAULT_EMPLOYED_TRIP_RETENTION = four_day_module.DEFAULT_EMPLOYED_TRIP_RETENTION
 generate_4day_week_dataset = four_day_module.generate_4day_week_dataset
-save_4day_week_dataset = four_day_module.save_4day_week_dataset
-
 
 st.set_page_config(page_title="Malta 4DW Impact Analysis", layout="wide")
 
@@ -477,11 +471,6 @@ with st.sidebar:
             "- `4-day employed trip retention`: controls how many employed trips remain in the 4-day scenario.\n"
             "- `Random seed`: keeps the generated datasets repeatable."
         )
-    save_requested = st.button("Save current CSV outputs", use_container_width=True)
-    st.caption(
-        "Optional export. This saves the currently displayed baseline and 4-day CSV files to "
-        f"`{GENERATED_TRIP_DATA_DIR}` for reuse outside the app."
-    )
 
 baseline_df, four_day_df, combined_df = build_scenarios(
     trip_count=trip_count,
@@ -489,32 +478,19 @@ baseline_df, four_day_df, combined_df = build_scenarios(
     employed_trip_retention=employed_trip_retention,
 )
 
-if save_requested:
-    baseline_path = save_generated_trips(baseline_df, BASELINE_TRIPS_PATH)
-    four_day_path = save_4day_week_dataset(four_day_df, FOUR_DAY_TRIPS_PATH)
-    st.success(
-        "Saved current CSV outputs:\n\n"
-        f"- `{baseline_path.name}`\n"
-        f"- `{four_day_path.name}`"
-    )
-
 baseline_total = len(baseline_df)
 four_day_total = len(four_day_df)
-trips_removed = baseline_total - four_day_total
-reduction_pct = (trips_removed / baseline_total) * 100 if baseline_total else 0.0
 retained_employed = int((four_day_df["labour_status"] == "Employed").sum())
 
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3 = st.columns(3)
 m1.metric("Baseline Trips", f"{baseline_total:,}")
-m2.metric("4-Day Trips", f"{four_day_total:,}", delta=f"-{trips_removed:,} vs baseline", delta_color="inverse")
-m3.metric("Trips Removed", f"{trips_removed:,}")
-m4.metric("Employed Trips Retained", f"{retained_employed:,}")
+m2.metric("4-Day Trips", f"{four_day_total:,}")
+m3.metric("Employed Trips Retained", f"{retained_employed:,}")
 
 st.caption("Plots update after each control change. Larger trip counts take longer to regenerate.")
 st.info(
     f"Current simulation: {trip_count:,} baseline trips, seed {int(seed)}, "
-    f"and 4-day employed trip retention set to {employed_trip_retention:.2f}. "
-    f"Overall trip reduction: {reduction_pct:.1f}%."
+    f"and 4-day employed trip retention set to {employed_trip_retention:.2f}."
 )
 
 comparison_tab, baseline_tab, four_day_tab = st.tabs(
