@@ -114,14 +114,11 @@ def generate_4day_week_dataset(
     adjusted_time_prob = _build_adjusted_time_probabilities(baseline_employed)
 
     employed_trip_retention = min(max(employed_trip_retention, 0.0), 1.0)
-    employed_4dw = (
-        baseline_employed
-        .sample(frac=employed_trip_retention, random_state=seed)
-        .copy()
-        .reset_index(drop=True)
-    )
+    still_working = baseline_employed.sample(frac=employed_trip_retention, random_state=seed).copy()
 
-    for index, row in employed_4dw.iterrows():
+    day_off = baseline_employed.drop(still_working.index).copy().reset_index(drop=True)
+
+    for index, row in day_off.iterrows():
         new_purpose = rng.choice(ALL_PURPOSES, p=adjusted_purpose_prob.values)
         new_mode = sample_mode(new_purpose, rng=rng)
         new_time_bin = rng.choice(TIME_BINS, p=adjusted_time_prob)
@@ -144,19 +141,18 @@ def generate_4day_week_dataset(
         if new_mode == "Bus":
             new_bus_ticket = rng.choice(Bus_ticket_labels, p=Bus_users_ticket_type_PROB)
 
-        employed_4dw.at[index, "purpose"] = new_purpose
-        employed_4dw.at[index, "mode"] = new_mode
-        employed_4dw.at[index, "time_bin"] = new_time_bin
-        employed_4dw.at[index, "destination"] = new_destination
-        employed_4dw.at[index, "predicted_destination"] = new_predicted_destination
-        employed_4dw.at[index, "parking_type"] = new_parking_type
-        employed_4dw.at[index, "parking_cost"] = new_parking_cost
-        employed_4dw.at[index, "bus_ticket"] = new_bus_ticket
+        day_off.at[index, "purpose"] = new_purpose
+        day_off.at[index, "mode"] = new_mode
+        day_off.at[index, "time_bin"] = new_time_bin
+        day_off.at[index, "destination"] = new_destination
+        day_off.at[index, "predicted_destination"] = new_predicted_destination
+        day_off.at[index, "parking_type"] = new_parking_type
+        day_off.at[index, "parking_cost"] = new_parking_cost
+        day_off.at[index, "bus_ticket"] = new_bus_ticket
 
-    result = pd.concat([non_employed, employed_4dw], ignore_index=True)
+    result = pd.concat([non_employed, still_working, day_off], ignore_index=True)
     result["scenario"] = "4day_week_day_off"
     return result
-
 
 def save_4day_week_dataset(
     dataset: pd.DataFrame,

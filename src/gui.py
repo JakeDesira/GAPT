@@ -9,16 +9,21 @@ import plotly.express as px
 import streamlit as st
 
 from paths import (
+    BASELINE_TRIPS_PATH,
+    FOUR_DAY_TRIPS_PATH,
+    GENERATED_TRIP_DATA_DIR,
     LOCALITY_BOUNDARIES_GPKG_PATH,
 )
 from syndata import (
     DEFAULT_SEED,
     generate_trips_with_seed,
+    save_generated_trips,
 )
 
 four_day_module = importlib.import_module("4_day")
 DEFAULT_EMPLOYED_TRIP_RETENTION = four_day_module.DEFAULT_EMPLOYED_TRIP_RETENTION
 generate_4day_week_dataset = four_day_module.generate_4day_week_dataset
+save_4day_week_dataset = four_day_module.save_4day_week_dataset
 
 
 st.set_page_config(page_title="Malta 4DW Impact Analysis", layout="wide")
@@ -68,7 +73,7 @@ def build_scenarios(
 def normalize_locality_name(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value))
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    normalized = normalized.replace("’", "'").replace("`", "'").replace("'", " ")
+    normalized = normalized.replace("'", "'").replace("`", "'").replace("'", " ")
     normalized = re.sub(r"[^a-zA-Z0-9]+", " ", normalized.lower())
     return re.sub(r"\s+", " ", normalized).strip()
 
@@ -215,17 +220,6 @@ def build_heatmap_dataframe(df: pd.DataFrame):
     return geojson, map_df
 
 
-def build_shared_heatmap_max(*dfs: pd.DataFrame) -> int:
-    max_value = 1
-    for df in dfs:
-        if df.empty:
-            continue
-        _, map_df = build_heatmap_dataframe(df)
-        if not map_df.empty:
-            max_value = max(max_value, int(map_df["trips"].max()))
-    return max_value
-
-
 def build_time_stats(df: pd.DataFrame) -> pd.DataFrame:
     stats = df.groupby(["time_bin", "scenario"]).size().reset_index(name="Count")
     stats["time_bin"] = pd.Categorical(stats["time_bin"], categories=TIME_ORDER, ordered=True)
@@ -265,12 +259,13 @@ def build_top_locality_comparison(df: pd.DataFrame, column: str, label: str, top
     return stats.drop(columns=[column]).sort_values(label)
 
 
-def render_heatmap(df: pd.DataFrame, title: str, shared_max_trips: int):
+def render_heatmap(df: pd.DataFrame, title: str, key_prefix: str = ""):
     geojson, map_df = build_heatmap_dataframe(df)
     if map_df.empty:
         st.warning("No mapped localities are available for the current dataset.")
         return
 
+    max_trips = max(int(map_df["trips"].max()), 1)
     choropleth = px.choropleth_mapbox(
         map_df,
         geojson=geojson,
@@ -280,7 +275,7 @@ def render_heatmap(df: pd.DataFrame, title: str, shared_max_trips: int):
         hover_name="locality",
         custom_data=["share_pct"],
         color_continuous_scale=HEATMAP_SCALE,
-        range_color=(0, shared_max_trips),
+        range_color=(0, max_trips),
         opacity=0.78,
         zoom=MAP_ZOOM,
         height=680,
@@ -311,15 +306,14 @@ def render_heatmap(df: pd.DataFrame, title: str, shared_max_trips: int):
             "bgcolor": "rgba(255,255,255,0.55)",
         },
     )
-    st.plotly_chart(figure, use_container_width=True)
+    st.plotly_chart(figure, use_container_width=True, key=f"{key_prefix}_heatmap")
     st.caption(
         "Locality polygons are shaded by predicted trip origins. White borders show the locality "
-        "boundaries from `malta_localities.gpkg`. Both scenario maps use the same color scale, "
-        "so lighter shading in the 4-day map reflects fewer trips rather than a separate rescale."
+        "boundaries from `malta_localities.gpkg`."
     )
 
 
-def render_single_scenario_localities(df: pd.DataFrame):
+def render_single_scenario_localities(df: pd.DataFrame, key_prefix: str = ""):
     top_origins = df["predicted_origin"].value_counts().nlargest(10).reset_index()
     top_origins.columns = ["Locality", "Trips"]
 
@@ -339,7 +333,7 @@ def render_single_scenario_localities(df: pd.DataFrame):
             text_auto=".2s",
         )
         figure.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(figure, use_container_width=True)
+        st.plotly_chart(figure, use_container_width=True, key=f"{key_prefix}_top_origins")
     with col2:
         st.markdown("### Top Destination Localities")
         figure = px.bar(
@@ -352,10 +346,10 @@ def render_single_scenario_localities(df: pd.DataFrame):
             text_auto=".2s",
         )
         figure.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(figure, use_container_width=True)
+        st.plotly_chart(figure, use_container_width=True, key=f"{key_prefix}_top_destinations")
 
 
-def render_single_scenario_breakdowns(df: pd.DataFrame):
+def render_single_scenario_breakdowns(df: pd.DataFrame, key_prefix: str = ""):
     mode_counts = df["mode"].value_counts().reset_index()
     mode_counts.columns = ["Mode", "Trips"]
 
@@ -365,7 +359,11 @@ def render_single_scenario_breakdowns(df: pd.DataFrame):
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Mode Split")
-        st.plotly_chart(px.pie(mode_counts, names="Mode", values="Trips", hole=0.5), use_container_width=True)
+        st.plotly_chart(
+            px.pie(mode_counts, names="Mode", values="Trips", hole=0.5),
+            use_container_width=True,
+            key=f"{key_prefix}_mode_pie",
+        )
     with col2:
         st.markdown("### Purpose Split")
         figure = px.bar(
@@ -375,7 +373,7 @@ def render_single_scenario_breakdowns(df: pd.DataFrame):
             color="Trips",
             color_continuous_scale="Blues",
         )
-        st.plotly_chart(figure, use_container_width=True)
+        st.plotly_chart(figure, use_container_width=True, key=f"{key_prefix}_purpose_bar")
 
 
 def render_comparison_tab(combined_df: pd.DataFrame):
@@ -396,6 +394,7 @@ def render_comparison_tab(combined_df: pd.DataFrame):
             title="Hourly Volume Comparison",
         ),
         use_container_width=True,
+        key="comparison_traffic_clock",
     )
 
     col1, col2 = st.columns(2)
@@ -405,6 +404,7 @@ def render_comparison_tab(combined_df: pd.DataFrame):
         st.plotly_chart(
             px.bar(mode_stats, x="Mode", y="Count", color="scenario", barmode="group"),
             use_container_width=True,
+            key="comparison_mode",
         )
     with col2:
         st.markdown("### Purpose Comparison")
@@ -412,6 +412,7 @@ def render_comparison_tab(combined_df: pd.DataFrame):
         st.plotly_chart(
             px.bar(purpose_stats, x="Purpose", y="Count", color="scenario", barmode="group"),
             use_container_width=True,
+            key="comparison_purpose",
         )
 
     st.markdown("### Busiest Origin Localities")
@@ -425,14 +426,14 @@ def render_comparison_tab(combined_df: pd.DataFrame):
         orientation="h",
     )
     figure.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(figure, use_container_width=True)
+    st.plotly_chart(figure, use_container_width=True, key="comparison_localities")
 
 
-def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str, shared_max_trips: int):
+def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str, key_prefix: str = ""):
     st.subheader(scenario_title)
-    render_heatmap(df, f"Trip Density by Predicted Origin ({scenario_title})", shared_max_trips)
-    render_single_scenario_localities(df)
-    render_single_scenario_breakdowns(df)
+    render_heatmap(df, f"Trip Density by Predicted Origin ({scenario_title})", key_prefix=key_prefix)
+    render_single_scenario_localities(df, key_prefix=key_prefix)
+    render_single_scenario_breakdowns(df, key_prefix=key_prefix)
     with st.expander("Show sample rows"):
         st.dataframe(df.head(50), use_container_width=True)
 
@@ -470,13 +471,32 @@ with st.sidebar:
         step=1,
         help="Use the same seed to reproduce the same synthetic datasets.",
     )
+    with st.expander("What these controls do"):
+        st.markdown(
+            "- `Trips generated`: sets the baseline simulation size.\n"
+            "- `4-day employed trip retention`: controls how many employed trips remain in the 4-day scenario.\n"
+            "- `Random seed`: keeps the generated datasets repeatable."
+        )
+    save_requested = st.button("Save current CSV outputs", use_container_width=True)
+    st.caption(
+        "Optional export. This saves the currently displayed baseline and 4-day CSV files to "
+        f"`{GENERATED_TRIP_DATA_DIR}` for reuse outside the app."
+    )
 
 baseline_df, four_day_df, combined_df = build_scenarios(
     trip_count=trip_count,
     seed=int(seed),
     employed_trip_retention=employed_trip_retention,
 )
-shared_heatmap_max = build_shared_heatmap_max(baseline_df, four_day_df)
+
+if save_requested:
+    baseline_path = save_generated_trips(baseline_df, BASELINE_TRIPS_PATH)
+    four_day_path = save_4day_week_dataset(four_day_df, FOUR_DAY_TRIPS_PATH)
+    st.success(
+        "Saved current CSV outputs:\n\n"
+        f"- `{baseline_path.name}`\n"
+        f"- `{four_day_path.name}`"
+    )
 
 baseline_total = len(baseline_df)
 four_day_total = len(four_day_df)
@@ -505,7 +525,7 @@ with comparison_tab:
     render_comparison_tab(combined_df)
 
 with baseline_tab:
-    render_single_scenario_tab(baseline_df, "5-Day Baseline", shared_heatmap_max)
+    render_single_scenario_tab(baseline_df, "5-Day Baseline", key_prefix="baseline")
 
 with four_day_tab:
-    render_single_scenario_tab(four_day_df, "4-Day Week", shared_heatmap_max)
+    render_single_scenario_tab(four_day_df, "4-Day Week", key_prefix="four_day")
