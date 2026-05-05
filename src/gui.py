@@ -425,20 +425,11 @@ def render_comparison_tab(combined_df: pd.DataFrame):
 
 def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str, key_prefix: str = ""):
     st.subheader(scenario_title)
-    # Origin heatmap — where trips depart from (home locality)
     render_heatmap(
         df,
         f"Trip Density by Predicted Origin ({scenario_title})",
         key_prefix=f"{key_prefix}_origin",
         column="predicted_origin",
-    )
-    # Destination heatmap — where trips end up; this is where the 4-day vs 5-day
-    # difference is most visible (day-off workers go to leisure, not work)
-    render_heatmap(
-        df,
-        f"Trip Density by Predicted Destination ({scenario_title})",
-        key_prefix=f"{key_prefix}_dest",
-        column="predicted_destination",
     )
     render_single_scenario_localities(df, key_prefix=key_prefix)
     render_single_scenario_breakdowns(df, key_prefix=key_prefix)
