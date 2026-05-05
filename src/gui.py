@@ -196,10 +196,10 @@ def load_locality_boundaries():
     return {"type": "FeatureCollection", "features": features}, metadata_df
 
 
-def build_heatmap_dataframe(df: pd.DataFrame):
+def build_heatmap_dataframe(df: pd.DataFrame, column: str = "predicted_origin"):
     geojson, metadata_df = load_locality_boundaries()
     trip_counts = (
-        df["predicted_origin"]
+        df[column]
         .dropna()
         .map(normalize_locality_name)
         .value_counts()
@@ -253,8 +253,8 @@ def build_top_locality_comparison(df: pd.DataFrame, column: str, label: str, top
     return stats.drop(columns=[column]).sort_values(label)
 
 
-def render_heatmap(df: pd.DataFrame, title: str, key_prefix: str = ""):
-    geojson, map_df = build_heatmap_dataframe(df)
+def render_heatmap(df: pd.DataFrame, title: str, key_prefix: str = "", column: str = "predicted_origin"):
+    geojson, map_df = build_heatmap_dataframe(df, column=column)
     if map_df.empty:
         st.warning("No mapped localities are available for the current dataset.")
         return
@@ -283,7 +283,7 @@ def render_heatmap(df: pd.DataFrame, title: str, key_prefix: str = ""):
         hovertemplate=(
             "<b>%{hovertext}</b><br>"
             "Trips: %{z:,}<br>"
-            "Share of predicted origins: %{customdata[0]:.2f}%<extra></extra>"
+            "Share: %{customdata[0]:.2f}%<extra></extra>"
         ),
     )
 
@@ -425,7 +425,21 @@ def render_comparison_tab(combined_df: pd.DataFrame):
 
 def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str, key_prefix: str = ""):
     st.subheader(scenario_title)
-    render_heatmap(df, f"Trip Density by Predicted Origin ({scenario_title})", key_prefix=key_prefix)
+    # Origin heatmap — where trips depart from (home locality)
+    render_heatmap(
+        df,
+        f"Trip Density by Predicted Origin ({scenario_title})",
+        key_prefix=f"{key_prefix}_origin",
+        column="predicted_origin",
+    )
+    # Destination heatmap — where trips end up; this is where the 4-day vs 5-day
+    # difference is most visible (day-off workers go to leisure, not work)
+    render_heatmap(
+        df,
+        f"Trip Density by Predicted Destination ({scenario_title})",
+        key_prefix=f"{key_prefix}_dest",
+        column="predicted_destination",
+    )
     render_single_scenario_localities(df, key_prefix=key_prefix)
     render_single_scenario_breakdowns(df, key_prefix=key_prefix)
     with st.expander("Show sample rows"):

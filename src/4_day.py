@@ -17,6 +17,7 @@ from syndata import (
     Parking_type_labels,
     sample_mode,
     sample_predicted_destination,
+    sample_predicted_origin,   # ← resample leisure-trip origin locality
 )
 
 
@@ -123,6 +124,12 @@ def generate_4day_week_dataset(
         new_mode = sample_mode(new_purpose, rng=rng)
         new_time_bin = rng.choice(TIME_BINS, p=adjusted_time_prob)
 
+        # On a day off the worker still departs from their home district,
+        # but we resample the specific locality so origin counts actually
+        # differ from the 5-day baseline (previously predicted_origin was
+        # never updated here, making both heatmaps identical).
+        new_predicted_origin = sample_predicted_origin(row["origin"], rng=rng)
+
         origin_idx = District_names.index(row["origin"])
         new_destination = rng.choice(District_names, p=OD_PROB[origin_idx])
         new_predicted_destination = sample_predicted_destination(
@@ -141,6 +148,7 @@ def generate_4day_week_dataset(
         if new_mode == "Bus":
             new_bus_ticket = rng.choice(Bus_ticket_labels, p=Bus_users_ticket_type_PROB)
 
+        day_off.at[index, "predicted_origin"] = new_predicted_origin  # ← FIX
         day_off.at[index, "purpose"] = new_purpose
         day_off.at[index, "mode"] = new_mode
         day_off.at[index, "time_bin"] = new_time_bin
