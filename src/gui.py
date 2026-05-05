@@ -51,14 +51,14 @@ def build_scenarios(
     employed_trip_retention: float,
 ):
     baseline_df = generate_trips_with_seed(trip_count, seed=seed)
-    baseline_df["scenario"] = "5-Day (Baseline)"
+    baseline_df["scenario"] = "Typical Workday (5-Day Baseline)"
 
     four_day_df = generate_4day_week_dataset(
         baseline_df,
         employed_trip_retention=employed_trip_retention,
         seed=seed,
     )
-    four_day_df["scenario"] = "4-Day Week"
+    four_day_df["scenario"] = "Extra Day Off (4-Day Week)"
 
     combined_df = pd.concat([baseline_df, four_day_df], ignore_index=True)
     return baseline_df, four_day_df, combined_df
@@ -373,8 +373,8 @@ def render_single_scenario_breakdowns(df: pd.DataFrame, key_prefix: str = ""):
 def render_comparison_tab(combined_df: pd.DataFrame):
     st.subheader("Scenario Comparison")
     st.write(
-        "Every chart in this tab compares the 5-day baseline against the 4-day week scenario "
-        "using the same simulation settings."
+        "Each chart contrasts a single **typical workday** with the **single extra day off** "
+        "introduced by the 4-day week. These are one-day snapshots — not weekly totals."
     )
 
     st.markdown("### Traffic Clock")
@@ -385,7 +385,7 @@ def render_comparison_tab(combined_df: pd.DataFrame):
             y="Count",
             color="scenario",
             markers=True,
-            title="Hourly Volume Comparison",
+            title="Hourly Volume — Typical Workday vs. Extra Day Off",
         ),
         use_container_width=True,
         key="comparison_traffic_clock",
@@ -439,9 +439,10 @@ def render_single_scenario_tab(df: pd.DataFrame, scenario_title: str, key_prefix
 
 st.title("Malta 4-Day Work Week Impact Study")
 st.markdown(
-    "This dashboard always generates **both** scenarios together. "
-    "Use the comparison tab to compare them, and the individual scenario tabs "
-    "to inspect each dataset on its own."
+    "All analytics in this dashboard model a **single day** — a typical workday baseline "
+    "compared against the **one extra day off** that the 4-day week introduces. Figures are "
+    "**not** weekly totals. Use the comparison tab to view both side-by-side, or the individual "
+    "scenario tabs to inspect each day on its own."
 )
 
 with st.sidebar:
@@ -452,15 +453,15 @@ with st.sidebar:
         max_value=200000,
         value=50000,
         step=5000,
-        help="Total synthetic trips generated for the 5-day baseline before the 4-day scenario is derived from it.",
+        help="Total synthetic trips generated for a single typical workday before the extra-day-off scenario is derived from it.",
     )
     employed_trip_retention = st.slider(
-        "4-day employed trip retention",
+        "Employed trip retention on the extra day off",
         min_value=0.10,
         max_value=1.00,
         value=float(DEFAULT_EMPLOYED_TRIP_RETENTION),
         step=0.05,
-        help="Share of employed trips kept in the 4-day scenario. Lower values mean a stronger reduction.",
+        help="Share of employed trips kept on the single extra day off. Lower values mean fewer employed people travel that day.",
     )
     seed = st.number_input(
         "Random seed",
@@ -472,8 +473,9 @@ with st.sidebar:
     )
     with st.expander("What these controls do"):
         st.markdown(
-            "- `Trips generated`: sets the baseline simulation size.\n"
-            "- `4-day employed trip retention`: controls how many employed trips remain in the 4-day scenario.\n"
+            "All charts represent a **single day** — not a full week.\n\n"
+            "- `Trips generated`: sets the baseline simulation size for one typical workday.\n"
+            "- `Employed trip retention on the extra day off`: controls how many employed trips remain on the single extra day off.\n"
             "- `Random seed`: keeps the generated datasets repeatable."
         )
 
@@ -488,25 +490,36 @@ four_day_total = len(four_day_df)
 retained_employed = int((four_day_df["labour_status"] == "Employed").sum())
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Baseline Trips", f"{baseline_total:,}")
-m2.metric("4-Day Trips", f"{four_day_total:,}")
+m1.metric("Trips on a Typical Workday", f"{baseline_total:,}")
+m2.metric("Trips on the Extra Day Off", f"{four_day_total:,}")
 m3.metric("Employed Trips Retained", f"{retained_employed:,}")
 
-st.caption("Plots update after each control change. Larger trip counts take longer to regenerate.")
+st.caption(
+    "All figures describe a **single day** — a typical workday vs. the one extra day off. "
+    "Plots update after each control change; larger trip counts take longer to regenerate."
+)
 st.info(
-    f"Current simulation: {trip_count:,} baseline trips, seed {int(seed)}, "
-    f"and 4-day employed trip retention set to {employed_trip_retention:.2f}."
+    f"Current simulation: {trip_count:,} trips on a typical workday, seed {int(seed)}, "
+    f"with {employed_trip_retention:.2f} of employed trips retained on the extra day off."
 )
 
 comparison_tab, baseline_tab, four_day_tab = st.tabs(
-    ["Scenario Comparison", "5-Day Baseline", "4-Day Week"]
+    ["Scenario Comparison", "Typical Workday (Baseline)", "Extra Day Off (4-Day Week)"]
 )
 
 with comparison_tab:
     render_comparison_tab(combined_df)
 
 with baseline_tab:
-    render_single_scenario_tab(baseline_df, "5-Day Baseline", key_prefix="baseline")
+    render_single_scenario_tab(
+        baseline_df,
+        "Typical Workday (5-Day Baseline)",
+        key_prefix="baseline",
+    )
 
 with four_day_tab:
-    render_single_scenario_tab(four_day_df, "4-Day Week", key_prefix="four_day")
+    render_single_scenario_tab(
+        four_day_df,
+        "Extra Day Off (4-Day Week)",
+        key_prefix="four_day",
+    )
