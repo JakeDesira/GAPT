@@ -122,5 +122,3 @@ Adjust `src/paths.py` if you want to use different folders.
 2. python3 src/syndata.py        # generate baseline
 3. python3 src/4_day.py         # derive 4-day dataset (optional — GUI does this automatically)
 4. cd src && streamlit run gui.py   # run the interactive dashboard
-
-If anything should be added to this guide (extra examples, environment tips, or pinned package versions), say which parts to expand and it will be updated.
